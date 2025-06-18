@@ -3,7 +3,8 @@ name: Build and Release Velocity Plugin
 on:
   push:
     tags:
-      - 'v*'  # 当推送v开头的标签时触发
+      - 'v*'  # 自动触发：当推送v开头的标签时
+  workflow_dispatch:  # 手动触发：允许从GitHub UI手动运行
 
 jobs:
   build:
