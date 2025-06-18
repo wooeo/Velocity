@@ -2,10 +2,9 @@ name: Build and Release Velocity
 
 on:
   push:
-    branches: [ "main" ]
     tags:
-      - 'v*'
-  workflow_dispatch:
+      - 'v*'  # 严格限制仅标签触发Release
+  workflow_dispatch:  # 保留手动触发
 
 jobs:
   build:
@@ -23,15 +22,13 @@ jobs:
       - name: Build with Gradle
         run: ./gradlew clean shadowJar
 
-      - name: Find and rename JAR
+      - name: Prepare JAR
         id: prepare_jar
         run: |
-          # 找到主JAR文件（排除sources和javadoc）
-          JAR_PATH=$(ls proxy/build/libs/*.jar | grep -v "sources" | grep -v "javadoc" | head -n 1)
-          # 复制并重命名为velocity.jar
-          cp "$JAR_PATH" velocity.jar
-          echo "jar_name=velocity.jar" >> $GITHUB_OUTPUT
-          echo "original_name=$(basename $JAR_PATH)" >> $GITHUB_OUTPUT
+          # 找到主JAR并重命名
+          JAR_PATH=$(find proxy/build/libs -name "*.jar" ! -name "*sources*" ! -name "*javadoc*" | head -n 1)
+          cp "$JAR_PATH" ./velocity.jar
+          echo "JAR_SIZE=$(ls -lh ./velocity.jar | awk '{print $5}')" >> $GITHUB_OUTPUT
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -41,7 +38,7 @@ jobs:
 
   release:
     needs: build
-    if: github.ref_type == 'tag'
+    if: startsWith(github.ref, 'refs/tags/v')  # 更严格的标签条件判断
     runs-on: ubuntu-latest
     steps:
       - name: Download Artifact
@@ -49,12 +46,18 @@ jobs:
         with:
           name: velocity-artifact
 
+      - name: Verify JAR
+        run: |
+          ls -lh *.jar
+          echo "JAR size: $(du -h velocity.jar | cut -f1)"
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: "velocity.jar"
+          files: velocity.jar
           tag_name: ${{ github.ref_name }}
           name: "Velocity ${{ github.ref_name }}"
-          body: "Velocity proxy server build ${{ github.ref_name }}"
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
