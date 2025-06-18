@@ -2,8 +2,7 @@ name: Build and Release Velocity
 
 on:
   push:
-    tags:
-      - '*'  # 监听所有标签
+    tags: ['*']  # 所有标签触发
   workflow_dispatch:
 
 jobs:
@@ -36,8 +35,7 @@ jobs:
           path: velocity.jar
 
   release:
-    needs: build
-    if: github.ref_type == 'tag'  # 所有标签均触发
+    needs: build  # 无条件执行，只要build成功
     runs-on: ubuntu-latest
     steps:
       - name: Download Artifact
@@ -49,7 +47,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: velocity.jar
-          tag_name: ${{ github.ref_name }}  # 使用实际标签名
+          tag_name: ${{ github.ref_name }}
           name: "Velocity ${{ github.ref_name }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
