@@ -3,8 +3,8 @@ name: Build and Release Velocity
 on:
   push:
     tags:
-      - 'v*'  # 严格限制仅标签触发Release
-  workflow_dispatch:  # 保留手动触发
+      - '*'  # 监听所有标签
+  workflow_dispatch:
 
 jobs:
   build:
@@ -25,7 +25,6 @@ jobs:
       - name: Prepare JAR
         id: prepare_jar
         run: |
-          # 找到主JAR并重命名
           JAR_PATH=$(find proxy/build/libs -name "*.jar" ! -name "*sources*" ! -name "*javadoc*" | head -n 1)
           cp "$JAR_PATH" ./velocity.jar
           echo "JAR_SIZE=$(ls -lh ./velocity.jar | awk '{print $5}')" >> $GITHUB_OUTPUT
@@ -38,7 +37,7 @@ jobs:
 
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')  # 更严格的标签条件判断
+    if: github.ref_type == 'tag'  # 所有标签均触发
     runs-on: ubuntu-latest
     steps:
       - name: Download Artifact
@@ -46,18 +45,11 @@ jobs:
         with:
           name: velocity-artifact
 
-      - name: Verify JAR
-        run: |
-          ls -lh *.jar
-          echo "JAR size: $(du -h velocity.jar | cut -f1)"
-
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: velocity.jar
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}  # 使用实际标签名
           name: "Velocity ${{ github.ref_name }}"
-          draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
