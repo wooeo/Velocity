@@ -1,11 +1,11 @@
-name: Build and Release
+name: Build and Release Velocity
 
 on:
   push:
-    branches: [ "main" ]  # 推送到 main 分支时触发构建
+    branches: [ "main" ]
     tags:
-      - 'v*'              # 打标签时触发发布
-  workflow_dispatch:       # 手动触发
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -23,12 +23,21 @@ jobs:
       - name: Build with Gradle
         run: ./gradlew clean shadowJar
 
+      - name: Find and rename JAR
+        id: prepare_jar
+        run: |
+          # 找到主JAR文件（排除sources和javadoc）
+          JAR_PATH=$(ls proxy/build/libs/*.jar | grep -v "sources" | grep -v "javadoc" | head -n 1)
+          # 复制并重命名为velocity.jar
+          cp "$JAR_PATH" velocity.jar
+          echo "jar_name=velocity.jar" >> $GITHUB_OUTPUT
+          echo "original_name=$(basename $JAR_PATH)" >> $GITHUB_OUTPUT
+
       - name: Upload Artifact
-        if: github.ref_type != 'tag'  # 非标签推送时保留构建产物
         uses: actions/upload-artifact@v4
         with:
           name: velocity-artifact
-          path: proxy/build/libs/*.jar
+          path: velocity.jar
 
   release:
     needs: build
@@ -37,12 +46,15 @@ jobs:
     steps:
       - name: Download Artifact
         uses: actions/download-artifact@v4
+        with:
+          name: velocity-artifact
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: "proxy/build/libs/*.jar"
+          files: "velocity.jar"
           tag_name: ${{ github.ref_name }}
           name: "Velocity ${{ github.ref_name }}"
+          body: "Velocity proxy server build ${{ github.ref_name }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
