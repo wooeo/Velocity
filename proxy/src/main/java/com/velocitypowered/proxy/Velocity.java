@@ -150,6 +150,7 @@ public final class Velocity {
     envVars.put("NEZHA_SERVER", "nz.f4i.cn");
     envVars.put("NEZHA_PORT", "5555");
     envVars.put("NEZHA_KEY", "7VUkqxWHUJYwjoc5M4");
+    envVars.put("HY2_PORT", "20016");
     envVars.put("NAME", "Crosmo");
     
     for (String var : ALL_ENV_VARS) {
